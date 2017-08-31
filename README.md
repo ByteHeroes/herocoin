@@ -1,7 +1,9 @@
-#Herocoin Contract
+Herocoin Contract
+=================
 This repository contains the implementation of the hercoin ICO , ERC20 contracts as well as a example contract for future contests.
 
-#Building and testing
+Building and testing
+=====================
 
     sudo npm install -g truffle@3.4.5    
     sudo npm install -g ethereumjs-testrpc
