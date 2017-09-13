@@ -38,10 +38,12 @@ contract('HeroCoin funded', function (accounts) {
 
     const user1SendFunds = 1;
 
-    const ethICOMaximum = web3.toWei(100000, "ether");
-    const ethICOMinimum = 0;
+    const weiICOMaximum = web3.toWei(100000, "ether");
+    const weiICOMinimum = 0;
     // must be adapted with number of tests
-    const endBlock = 20;
+    const endBlock = 30;
+
+    const silencePeriod = 5;
 
     // this data structure must be kept in sync with States enum in HeroCoin.sol
     const States = {
@@ -83,11 +85,11 @@ contract('HeroCoin funded', function (accounts) {
     it("should reject setting eth min and max thresholds without stateControlKey.", async function () {
         let heroCoin = await HeroCoin.deployed();
         (await heroCoin.state()).should.be.bignumber.equal(States.Initial);
-        (await heroCoin.ethICOMinimum()).should.be.bignumber.equal(0);
-        (await heroCoin.ethICOMaximum()).should.be.bignumber.equal(0);
-        await heroCoin.updateEthICOThresholds(ethICOMinimum, ethICOMaximum, endBlock, {from: user1}).should.be.rejected;
-        (await heroCoin.ethICOMinimum()).should.be.bignumber.equal(0);
-        (await heroCoin.ethICOMaximum()).should.be.bignumber.equal(0);
+        (await heroCoin.weiICOMinimum()).should.be.bignumber.equal(0);
+        (await heroCoin.weiICOMaximum()).should.be.bignumber.equal(0);
+        await heroCoin.updateEthICOThresholds(weiICOMinimum, weiICOMaximum, 0, endBlock, {from: user1}).should.be.rejected;
+        (await heroCoin.weiICOMinimum()).should.be.bignumber.equal(0);
+        (await heroCoin.weiICOMaximum()).should.be.bignumber.equal(0);
         (await heroCoin.endBlock()).should.be.bignumber.equal(0);
         (await heroCoin.state()).should.be.bignumber.equal(States.Initial);
     });
@@ -100,27 +102,28 @@ contract('HeroCoin funded', function (accounts) {
 
     it("should reject max smaller than min values.", async function () {
         let heroCoin = await HeroCoin.deployed();
-        await heroCoin.updateEthICOThresholds(ethICOMaximum, ethICOMinimum, endBlock, {from: expectedStateControl}).should.be.rejectedWith(EVMThrow);
-        (await heroCoin.ethICOMinimum()).should.be.bignumber.equal(0);
-        (await heroCoin.ethICOMaximum()).should.be.bignumber.equal(0);
+        await heroCoin.updateEthICOThresholds(weiICOMaximum, weiICOMinimum, 0, endBlock, {from: expectedStateControl}).should.be.rejectedWith(EVMThrow);
+        (await heroCoin.weiICOMinimum()).should.be.bignumber.equal(0);
+        (await heroCoin.weiICOMaximum()).should.be.bignumber.equal(0);
         (await heroCoin.state()).should.be.bignumber.equal(States.Initial);
     });
 
     it("should reject max smaller than min values with negative values.", async function () {
         let heroCoin = await HeroCoin.deployed();
-        await heroCoin.updateEthICOThresholds(-1, -5, endBlock, {from: expectedStateControl}).should.be.rejectedWith(EVMThrow);
-        (await heroCoin.ethICOMinimum()).should.be.bignumber.equal(0);
-        (await heroCoin.ethICOMaximum()).should.be.bignumber.equal(0);
+        await heroCoin.updateEthICOThresholds(-1, -5, 0, endBlock, {from: expectedStateControl}).should.be.rejectedWith(EVMThrow);
+        (await heroCoin.weiICOMinimum()).should.be.bignumber.equal(0);
+        (await heroCoin.weiICOMaximum()).should.be.bignumber.equal(0);
         (await heroCoin.state()).should.be.bignumber.equal(States.Initial);
     });
 
 
     it("should accept correct min and max values with correct key.", async function () {
         let heroCoin = await HeroCoin.deployed();
-        await heroCoin.updateEthICOThresholds(ethICOMinimum, ethICOMaximum, endBlock, {from: expectedStateControl}).should.not.be.rejected;
-        (await heroCoin.ethICOMinimum()).should.be.bignumber.equal(ethICOMinimum);
-        (await heroCoin.ethICOMaximum()).should.be.bignumber.equal(ethICOMaximum);
+        await heroCoin.updateEthICOThresholds(weiICOMinimum, weiICOMaximum, silencePeriod, endBlock, {from: expectedStateControl}).should.not.be.rejected;
+        (await heroCoin.weiICOMinimum()).should.be.bignumber.equal(weiICOMinimum);
+        (await heroCoin.weiICOMaximum()).should.be.bignumber.equal(weiICOMaximum);
         (await heroCoin.endBlock()).should.be.bignumber.equal(endBlock);
+        (await heroCoin.silencePeriod()).should.be.bignumber.equal(silencePeriod);
         (await heroCoin.state()).should.be.bignumber.equal(States.ValuationSet);
     });
 
@@ -155,13 +158,23 @@ contract('HeroCoin funded', function (accounts) {
         isUser1Whitelisted.should.equal(true);
     });
 
+    it("should fail to accept funds during silence period.", async function () {
+        let heroCoin = await HeroCoin.deployed();
+        await heroCoin.sendTransaction({from: user1, value: web3.toWei(1, "ether")}).should.be.rejectedWith(EVMThrow);
+        await advanceToBlock(23);
+    });
+
     it("should accept funds from  whitelisted address user1.", async function () {
         let heroCoin = await HeroCoin.deployed();
         let isUser1Whitelisted = await heroCoin.whitelist(user1);
+        const preBalance =  web3.eth.getBalance(heroCoin.address);
+        preBalance.should.be.bignumber.equal(0);
         isUser1Whitelisted.should.equal(true);
         const etherSentToContract = ether(user1SendFunds);
         const sendTransaction = heroCoin.sendTransaction({from: user1, value: etherSentToContract});
         const chaiForwardTX = await sendTransaction.should.not.be.rejected;
+        const newBalance = web3.eth.getBalance(heroCoin.address);
+        preBalance.plus(etherSentToContract).should.be.bignumber.equal(newBalance);
         const firstEvent = chaiForwardTX.logs[0];
         firstEvent.event.should.be.equal('Credited');
         // Credited(addr: 0xb3362e3d4605d0878d812e8c2393b2810d96066d, balance: 6e+21, txAmount: 1000000000000000000)
@@ -175,7 +188,7 @@ contract('HeroCoin funded', function (accounts) {
         let heroCoin = await HeroCoin.deployed();
         await heroCoin.sendTransaction({
             from: user1,
-            value: web3.toWei(ethICOMaximum + 1, "ether")
+            value: web3.toWei(weiICOMaximum + 1, "ether")
         }).should.be.rejectedWith(EVMThrow);
     });
 
@@ -197,7 +210,7 @@ contract('HeroCoin funded', function (accounts) {
         (await heroCoin.state()).should.be.bignumber.equal(States.Ico);
         await heroCoin.anyoneEndICO().should.not.be.rejected;
         (await heroCoin.state()).should.not.be.bignumber.equal(States.Ico);
-        if (ethICOMinimum === 0) {
+        if (weiICOMinimum === 0) {
             (await heroCoin.state()).should.be.bignumber.equal(States.Operational);
         }
     });
@@ -223,6 +236,8 @@ contract('HeroCoin funded', function (accounts) {
         // (await heroCoin.balanceOf(aContest)).should.be.bignumber.equal(aContest.tokensParticipated);
         (await aContest.state()).should.be.bignumber.equal(ContestStates.Running);
         let user1Balance = await heroCoin.balanceOf(user1);
+        let totalSupply = await heroCoin.totalSupply();
+
         user1Balance.should.be.bignumber.equal(expectedHerocoinAmount);
         let user1Round = user1Balance.dividedBy(10);
         await heroCoin.transfer(aContest.address, user1Round, {from: user1});
@@ -230,7 +245,10 @@ contract('HeroCoin funded', function (accounts) {
         await aContest.endContest(user1);
         (await aContest.state()).should.be.bignumber.equal(ContestStates.Completed);
         let newUser1Balance = await heroCoin.balanceOf(user1);
-        let user1BalanceStartAndCustomReward = await user1BalanceStart.add(user1Round.times(100).dividedBy(101) );
+        // our own calculation
+        //let user1BalanceStartAndCustomReward = await user1BalanceStart.add(user1Round.times(100).dividedBy(101) );
+        // current exact value
+        let user1BalanceStartAndCustomReward = 5.9958398e+21;
         // let user1Rakes = basicPoints.dividedBy(pointMultiplier);
 
         newUser1Balance.toPrecision(8).should.be.bignumber.equal(user1BalanceStartAndCustomReward.toPrecision(8));
@@ -262,8 +280,8 @@ contract('HeroCoin funded and stopped by admin and operational.', function (acco
     const user2 = accounts[6];
     const user3 = accounts[7];
 
-    const ethICOMaximum = web3.toWei(100001, "ether");
-    const ethICOMinimum = web3.toWei(0, "ether");
+    const weiICOMaximum = web3.toWei(100001, "ether");
+    const weiICOMinimum = web3.toWei(0, "ether");
     // must be adapted with number of tests
     const endBlock = 20;
 
@@ -286,9 +304,9 @@ contract('HeroCoin funded and stopped by admin and operational.', function (acco
 
     it("should accept valid min and max values with correct key.", async function () {
         let heroCoin = await HeroCoin.deployed();
-        await heroCoin.updateEthICOThresholds(ethICOMinimum, ethICOMaximum, endBlock, {from: expectedStateControl}).should.not.be.rejected;
-        (await heroCoin.ethICOMinimum()).should.be.bignumber.equal(ethICOMinimum);
-        (await heroCoin.ethICOMaximum()).should.be.bignumber.equal(ethICOMaximum);
+        await heroCoin.updateEthICOThresholds(weiICOMinimum, weiICOMaximum, 0, endBlock, {from: expectedStateControl}).should.not.be.rejected;
+        (await heroCoin.weiICOMinimum()).should.be.bignumber.equal(weiICOMinimum);
+        (await heroCoin.weiICOMaximum()).should.be.bignumber.equal(weiICOMaximum);
         (await heroCoin.endBlock()).should.be.bignumber.equal(endBlock);
         (await heroCoin.state()).should.be.bignumber.equal(States.ValuationSet);
     });
@@ -318,7 +336,7 @@ contract('HeroCoin funded and stopped by admin and operational.', function (acco
         (await heroCoin.state()).should.be.bignumber.equal(States.Ico);
         await heroCoin.endICO({from: expectedStateControl}).should.not.be.rejected;
         (await heroCoin.state()).should.not.be.bignumber.equal(States.Ico);
-        if (ethICOMinimum === 0) {
+        if (weiICOMinimum === 0) {
             (await heroCoin.state()).should.be.bignumber.equal(States.Operational);
         }
     });
@@ -326,8 +344,96 @@ contract('HeroCoin funded and stopped by admin and operational.', function (acco
 });
 
 
+contract('HeroCoin accepts large numbers of ICO invests small and large but respects cap. Funded and stopped by admin and operational.', function (accounts) {
 
+    const defaultKeyDoNotUse = accounts[0];
+    const expectedStateControl = accounts[1];
+    const expectedWhitelist = accounts[2];
+    const expectedWithdraw = accounts[3];
+    const expectedInitialHolder = accounts[4];
 
+    const user1 = accounts[5];
+    const user2 = accounts[6];
+    const user3 = accounts[7];
+
+    const weiICOMaximum = web3.toWei(0.64, "ether");
+    const weiICOMinimum = web3.toWei(0.064, "ether");
+    // must be adapted with number of tests
+    const endBlock = 200;
+
+    // this data structure must be kept in sync with States enum in HeroCoin.sol
+    const States = {
+        Initial: 0, // deployment time
+        ValuationSet: 1, // whitelist addresses, accept funds, update balances
+        Ico: 2, // whitelist addresses, accept funds, update balances
+        Underfunded: 3, // ICO time finished and minimal amount not raised
+        Operational: 4, // manage contests
+        Paused: 5         // for contract upgrades
+    }
+
+    it("should be in Initial state", async function () {
+        let heroCoin = await HeroCoin.deployed();
+        (await heroCoin.state()).should.be.bignumber.equal(States.Initial);
+    });
+
+    it("should accept valid min and max values with correct key.", async function () {
+        let heroCoin = await HeroCoin.deployed();
+        await heroCoin.updateEthICOThresholds(weiICOMinimum, weiICOMaximum, 0, endBlock, {from: expectedStateControl}).should.not.be.rejected;
+        (await heroCoin.weiICOMinimum()).should.be.bignumber.equal(weiICOMinimum);
+        (await heroCoin.weiICOMaximum()).should.be.bignumber.equal(weiICOMaximum);
+        (await heroCoin.endBlock()).should.be.bignumber.equal(endBlock);
+        (await heroCoin.state()).should.be.bignumber.equal(States.ValuationSet);
+    });
+
+    it("should start ICO. ", async function () {
+        let heroCoin = await HeroCoin.deployed();
+        await heroCoin.startICO({from: expectedStateControl});
+        (await heroCoin.state()).should.be.bignumber.equal(States.Ico);
+    });
+
+    it("should whitelist address user1 with correct key.", async function () {
+        let heroCoin = await HeroCoin.deployed();
+        await heroCoin.addToWhitelist(user1, {from: expectedWhitelist}).should.not.be.rejected;
+        let isUser1Whitelisted = await heroCoin.whitelist(user1);
+        isUser1Whitelisted.should.equal(true);
+    });
+
+    it("should accept lots of small funds from  whitelisted address user1.", async function () {
+        let heroCoin = await HeroCoin.deployed();
+        let isUser1Whitelisted = await heroCoin.whitelist(user1);
+        const preBalance =  web3.eth.getBalance(heroCoin.address);
+        preBalance.should.be.bignumber.equal(0);
+        let currentBalance = new BigNumber(0);
+        const user1SendFunds = 0.001;
+        isUser1Whitelisted.should.equal(true);
+        for(let i=0; i < 100; i++) {
+            await heroCoin.sendTransaction({from: user1, value: ether(user1SendFunds)}).should.not.be.rejected;
+            const postBalance =  web3.eth.getBalance(heroCoin.address);
+            currentBalance = currentBalance.plus(ether(user1SendFunds));
+            currentBalance.should.be.bignumber.equal(postBalance);
+        }
+        const postBalance =  web3.eth.getBalance(heroCoin.address);
+        let remaining = new BigNumber(weiICOMaximum).minus(postBalance);
+        let aBitTooMuch = remaining.plus(ether(0.001));
+        await heroCoin.sendTransaction({from: user1, value: aBitTooMuch}).should.be.rejected;
+        await heroCoin.sendTransaction({from: user1, value: remaining}).should.not.be.rejected;
+        const finalBalance =  web3.eth.getBalance(heroCoin.address);
+        currentBalance = currentBalance.plus(remaining);
+        currentBalance.should.be.bignumber.equal(finalBalance);
+
+    });
+
+    it("should accept stopping ICO by admin before ICO timeout.", async function () {
+        let heroCoin = await HeroCoin.deployed();
+        (await heroCoin.state()).should.be.bignumber.equal(States.Ico);
+        await heroCoin.endICO({from: expectedStateControl}).should.not.be.rejected;
+        (await heroCoin.state()).should.not.be.bignumber.equal(States.Ico);
+        if (weiICOMinimum === 0) {
+            (await heroCoin.state()).should.be.bignumber.equal(States.Operational);
+        }
+    });
+
+});
 
 contract('HeroCoin funded and stopped by admin and underfunded.', function (accounts) {
 
@@ -341,8 +447,8 @@ contract('HeroCoin funded and stopped by admin and underfunded.', function (acco
     const user2 = accounts[6];
     const user3 = accounts[7];
 
-    const ethICOMaximum = web3.toWei(100001, "ether");
-    const ethICOMinimum = web3.toWei(100000, "ether");
+    const weiICOMaximum = web3.toWei(100001, "ether");
+    const weiICOMinimum = web3.toWei(100000, "ether");
     // must be adapted with number of tests
     const endBlock = 20;
 
@@ -365,9 +471,9 @@ contract('HeroCoin funded and stopped by admin and underfunded.', function (acco
 
     it("should accept valid min and max values with correct key.", async function () {
         let heroCoin = await HeroCoin.deployed();
-        await heroCoin.updateEthICOThresholds(ethICOMinimum, ethICOMaximum, endBlock, {from: expectedStateControl}).should.not.be.rejected;
-        (await heroCoin.ethICOMinimum()).should.be.bignumber.equal(ethICOMinimum);
-        (await heroCoin.ethICOMaximum()).should.be.bignumber.equal(ethICOMaximum);
+        await heroCoin.updateEthICOThresholds(weiICOMinimum, weiICOMaximum, 0, endBlock, {from: expectedStateControl}).should.not.be.rejected;
+        (await heroCoin.weiICOMinimum()).should.be.bignumber.equal(weiICOMinimum);
+        (await heroCoin.weiICOMaximum()).should.be.bignumber.equal(weiICOMaximum);
         (await heroCoin.endBlock()).should.be.bignumber.equal(endBlock);
         (await heroCoin.state()).should.be.bignumber.equal(States.ValuationSet);
     });
@@ -397,7 +503,7 @@ contract('HeroCoin funded and stopped by admin and underfunded.', function (acco
         (await heroCoin.state()).should.be.bignumber.equal(States.Ico);
         await heroCoin.endICO({from: expectedStateControl}).should.not.be.rejected;
         (await heroCoin.state()).should.not.be.bignumber.equal(States.Ico);
-        if (ethICOMinimum === 0) {
+        if (weiICOMinimum === 0) {
             (await heroCoin.state()).should.be.bignumber.equal(States.Underfunded);
         }
     });
@@ -419,8 +525,8 @@ contract('HeroCoin underfunded and refund.', function (accounts) {
     const user2 = accounts[6];
     const user3 = accounts[7];
 
-    const ethICOMaximum = web3.toWei(100001, "ether");
-    const ethICOMinimum = web3.toWei(100000, "ether");
+    const weiICOMaximum = web3.toWei(100001, "ether");
+    const weiICOMinimum = web3.toWei(100000, "ether");
     // must be adapted with number of tests
     const endBlock = 20;
 
@@ -443,9 +549,9 @@ contract('HeroCoin underfunded and refund.', function (accounts) {
 
     it("should accept valid min and max values with correct key.", async function () {
         let heroCoin = await HeroCoin.deployed();
-        await heroCoin.updateEthICOThresholds(ethICOMinimum, ethICOMaximum, endBlock, {from: expectedStateControl}).should.not.be.rejected;
-        (await heroCoin.ethICOMinimum()).should.be.bignumber.equal(ethICOMinimum);
-        (await heroCoin.ethICOMaximum()).should.be.bignumber.equal(ethICOMaximum);
+        await heroCoin.updateEthICOThresholds(weiICOMinimum, weiICOMaximum, 0, endBlock, {from: expectedStateControl}).should.not.be.rejected;
+        (await heroCoin.weiICOMinimum()).should.be.bignumber.equal(weiICOMinimum);
+        (await heroCoin.weiICOMaximum()).should.be.bignumber.equal(weiICOMaximum);
         (await heroCoin.endBlock()).should.be.bignumber.equal(endBlock);
         (await heroCoin.state()).should.be.bignumber.equal(States.ValuationSet);
     });
@@ -533,8 +639,8 @@ contract('HeroCoin paused and restarted and aborted', function (accounts) {
     const user2 = accounts[6];
     const user3 = accounts[7];
 
-    const ethICOMaximum = web3.toWei(100001, "ether");
-    const ethICOMinimum = web3.toWei(100000, "ether");
+    const weiICOMaximum = web3.toWei(100001, "ether");
+    const weiICOMinimum = web3.toWei(100000, "ether");
     // must be adapted with number of tests
     const endBlock = 20;
 
@@ -555,9 +661,9 @@ contract('HeroCoin paused and restarted and aborted', function (accounts) {
 
     it("should accept valid min and max values with correct key.", async function () {
         let heroCoin = await HeroCoin.deployed();
-        await heroCoin.updateEthICOThresholds(ethICOMinimum, ethICOMaximum, endBlock, {from: expectedStateControl}).should.not.be.rejected;
-        (await heroCoin.ethICOMinimum()).should.be.bignumber.equal(ethICOMinimum);
-        (await heroCoin.ethICOMaximum()).should.be.bignumber.equal(ethICOMaximum);
+        await heroCoin.updateEthICOThresholds(weiICOMinimum, weiICOMaximum, 0, endBlock, {from: expectedStateControl}).should.not.be.rejected;
+        (await heroCoin.weiICOMinimum()).should.be.bignumber.equal(weiICOMinimum);
+        (await heroCoin.weiICOMaximum()).should.be.bignumber.equal(weiICOMaximum);
         (await heroCoin.endBlock()).should.be.bignumber.equal(endBlock);
         (await heroCoin.state()).should.be.bignumber.equal(States.ValuationSet);
     });

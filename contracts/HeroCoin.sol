@@ -1,7 +1,7 @@
 /*
 Implements ERC 20 Token standard: https://github.com/ethereum/EIPs/issues/20.
 */
-pragma solidity ^0.4.8;
+pragma solidity ^0.4.11;
 
 
 import "zeppelin/token/StandardToken.sol";
@@ -24,7 +24,7 @@ contract HeroCoin is StandardToken {
 
     string public constant name = "Herocoin";
 
-    string public constant symbol = "HERO";
+    string public constant symbol = "PLAY";
 
     uint8 public constant decimals = 18;
 
@@ -40,9 +40,13 @@ contract HeroCoin is StandardToken {
 
     States public state;
 
-    uint256 public ethICOMinimum;
+    uint256 public weiICOMinimum;
 
-    uint256 public ethICOMaximum;
+    uint256 public weiICOMaximum;
+
+    uint256 public silencePeriod;
+
+    uint256 public startAcceptingFundsBlock;
 
     uint256 public endBlock;
 
@@ -51,14 +55,12 @@ contract HeroCoin is StandardToken {
     mapping (address => uint256) lastRakePoints;
 
 
-    //        uint256 pointMultiplier2 = 10e18; //100% = 10^18 points
-    uint256 pointMultiplier = 1000000000000000000; //100% = 10^18 points
-    uint256 totalRakePoints; //total amount of rakes ever paid out as a points value
-    uint256 unclaimedRakes; //amount of coins unclaimed
+    uint256 pointMultiplier = 1e18; //100% = 1*10^18 points
+    uint256 totalRakePoints; //total amount of rakes ever paid out as a points value. increases monotonically, but the number range is 2^256, that's enough.
+    uint256 unclaimedRakes; //amount of coins unclaimed. acts like a special entry to balances
     uint256 constant percentForSale = 30;
 
     mapping (address => bool) public contests; // true if this address holds a contest
-    mapping (address => string) public contestData;
 
     //this creates the contract and stores the owner. it also passes in 3 addresses to be used later during the lifetime of the contract.
     function HeroCoin(address _stateControl, address _whitelistControl, address _withdraw, address _initialHolder) {
@@ -67,9 +69,9 @@ contract HeroCoin is StandardToken {
         whitelistControl = _whitelistControl;
         withdrawControl = _withdraw;
         moveToState(States.Initial);
-        ethICOMinimum = 0;
+        weiICOMinimum = 0;
         //to be overridden
-        ethICOMaximum = 0;
+        weiICOMaximum = 0;
         endBlock = 0;
         ETH_HEROCOIN = 0;
         totalSupply = 2000000000 * pointMultiplier;
@@ -122,8 +124,9 @@ contract HeroCoin is StandardToken {
     requireState(States.Ico)
     {
         require(whitelist[msg.sender] == true);
-        require(this.balance + msg.value < ethICOMaximum);
+        require(this.balance <= weiICOMaximum); //note that msg.value is already included in this.balance
         require(block.number < endBlock);
+        require(block.number >= startAcceptingFundsBlock);
         uint256 heroCoinIncrease = msg.value * ETH_HEROCOIN;
         balances[initialHolder] -= heroCoinIncrease;
         balances[msg.sender] += heroCoinIncrease;
@@ -137,18 +140,24 @@ contract HeroCoin is StandardToken {
         state = _newState;
     }
 
-    //do we want to allow to have this called
-    function updateEthICOThresholds(uint256 _newEthICOMinimum, uint256 _newEthICOMaximum, uint256 _newEndBlock)
+    // ICO contract configuration function
+    // newEthICOMinimum is the minimum amount of funds to raise
+    // newEthICOMaximum is the maximum amount of funds to raise
+    // silencePeriod is a number of blocks to wait after starting the ICO. No funds are accepted during the silence period. It can be set to zero.
+    // newEndBlock is the absolute block number at which the ICO must stop. It must be set after now + silence period.
+    function updateEthICOThresholds(uint256 _newWeiICOMinimum, uint256 _newWeiICOMaximum, uint256 _silencePeriod, uint256 _newEndBlock)
     onlyStateControl
     {
         require(state == States.Initial || state == States.ValuationSet);
-        require(_newEthICOMaximum > _newEthICOMinimum);
+        require(_newWeiICOMaximum > _newWeiICOMinimum);
+        require(block.number + silencePeriod < _newEndBlock);
         require(block.number < _newEndBlock);
-        ethICOMinimum = _newEthICOMinimum;
-        ethICOMaximum = _newEthICOMaximum;
+        weiICOMinimum = _newWeiICOMinimum;
+        weiICOMaximum = _newWeiICOMaximum;
+        silencePeriod = _silencePeriod;
         endBlock = _newEndBlock;
-        // initial value of ETH_HEROCOIN set before moving from ICO to Operational states
-        ETH_HEROCOIN = ((totalSupply * percentForSale) / 100) / ethICOMaximum;
+        // initial conversion rate of ETH_HEROCOIN set now, this is used during the Ico phase.
+        ETH_HEROCOIN = ((totalSupply * percentForSale) / 100) / weiICOMaximum;
         // check pointMultiplier
         moveToState(States.ValuationSet);
     }
@@ -158,6 +167,8 @@ contract HeroCoin is StandardToken {
     requireState(States.ValuationSet)
     {
         require(block.number < endBlock);
+        require(block.number + silencePeriod < endBlock);
+        startAcceptingFundsBlock = block.number + silencePeriod;
         moveToState(States.Ico);
     }
 
@@ -166,10 +177,11 @@ contract HeroCoin is StandardToken {
     onlyStateControl
     requireState(States.Ico)
     {
-        if (this.balance < ethICOMinimum) {
+        if (this.balance < weiICOMinimum) {
             moveToState(States.Underfunded);
         }
         else {
+            burnUnsoldCoins();
             moveToState(States.Operational);
         }
     }
@@ -178,12 +190,22 @@ contract HeroCoin is StandardToken {
     requireState(States.Ico)
     {
         require(block.number > endBlock);
-        if (this.balance < ethICOMinimum) {
+        if (this.balance < weiICOMinimum) {
             moveToState(States.Underfunded);
         }
         else {
+            burnUnsoldCoins();
             moveToState(States.Operational);
         }
+    }
+
+    function burnUnsoldCoins()
+    internal
+    {
+        uint256 soldcoins = this.balance * ETH_HEROCOIN;
+        totalSupply = soldcoins * 100 / percentForSale;
+        balances[initialHolder] = totalSupply - soldcoins;
+        //slashing the initial supply, so that the ico is selling 30% total
     }
 
     function addToWhitelist(address _whitelisted)
@@ -336,7 +358,7 @@ contract HeroCoin is StandardToken {
 
     modifier enforceRake(address _contest, uint256 _value){
         //we calculate 1% of the total value, rounded up. division would round down otherwise.
-        //explicit brackets illustrate that the calcuation only round down when dividing by 100, to avoid an expression
+        //explicit brackets illustrate that the calculation only round down when dividing by 100, to avoid an expression
         // like value * (99/100)
         if (contests[_contest]) {
             uint256 toPay = _value - ((_value * 99) / 100);
