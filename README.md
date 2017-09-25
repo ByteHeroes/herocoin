@@ -20,5 +20,7 @@ run tests with
 
 Authors
 =======
+
 [Jerome Rousselot](https://github.com/jeromerousselot)
+
 [Andreas Petersson](https://github.com/apetersson)
