@@ -18,4 +18,7 @@ run tests with
  
     truffle test
 
-currently deployed on ropsten to 0xe93099d7e2afbfe88044d40ab5141f1c3c1ac39b
+Authors
+=======
+[Jerome Rousselot](https://github.com/jeromerousselot)
+[Andreas Petersson](https://github.com/apetersson)
