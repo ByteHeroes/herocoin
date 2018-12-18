@@ -1,3 +1,5 @@
+// DO NOT EDIT - copied from original token deployment repository (required for other contracts)
+
 /*
 Implements ERC 20 Token standard: https://github.com/ethereum/EIPs/issues/20.
 */
